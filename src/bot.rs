@@ -1,15 +1,14 @@
 //! The Discord side. Links posted in the proposals thread become sheet rows,
-//! replies to vote requests become grades, the moment they arrive. `/played`
-//! records who played a game and asks them for their grade after playing.
+//! replies to vote requests become grades, the moment they arrive. A game
+//! marked played on the sheet gets a "who played?" menu in the thread, and
+//! those players a request for their grade after playing.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use serenity::all::{
-    ChannelId, CommandDataOptionValue, CommandInteraction, CommandOptionType, ComponentInteraction,
-    ComponentInteractionDataKind, Context, CreateActionRow, CreateAutocompleteResponse,
-    CreateCommand, CreateCommandOption, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateMessage, CreateSelectMenu, CreateSelectMenuKind,
+    ChannelId, ComponentInteraction, ComponentInteractionDataKind, Context, CreateActionRow,
+    CreateInteractionResponse, CreateMessage, CreateSelectMenu, CreateSelectMenuKind,
     CreateSelectMenuOption, EditInteractionResponse, EventHandler, GatewayIntents, GetMessages,
     Http, Interaction, Message, MessageId, Ready, UserId,
 };
@@ -59,9 +58,6 @@ impl EventHandler for Bot {
         if self.started.set(()).is_err() {
             return; // a reconnection: everything below already runs
         }
-        if let Err(e) = self.register_commands(&ctx).await {
-            tracing::error!("cannot register the slash commands: {e:#}");
-        }
         self.load_avatars(&ctx).await;
         if let Err(e) = self.catch_up(&ctx).await {
             tracing::error!("catching up on missed messages: {e:#}");
@@ -87,12 +83,6 @@ impl EventHandler for Bot {
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         let result = match interaction {
-            Interaction::Autocomplete(cmd) => self.autocomplete(&ctx, &cmd).await,
-            Interaction::Command(cmd) => match cmd.data.name.as_str() {
-                "played" => self.cmd_played(&ctx, &cmd).await,
-                "missing" => self.cmd_missing(&ctx, &cmd).await,
-                _ => Ok(()),
-            },
             Interaction::Component(comp) if comp.data.custom_id.starts_with("played:") => {
                 self.on_players_chosen(&ctx, &comp).await
             }
@@ -107,34 +97,6 @@ impl EventHandler for Bot {
 impl Bot {
     fn me(&self) -> Option<UserId> {
         self.me.get().copied()
-    }
-
-    async fn register_commands(&self, ctx: &Context) -> anyhow::Result<()> {
-        let thread = ChannelId::new(self.app.settings.thread_id)
-            .to_channel(ctx)
-            .await?;
-        let guild = thread
-            .guild()
-            .map(|c| c.guild_id)
-            .ok_or_else(|| anyhow::anyhow!("thread_id is not a server channel"))?;
-        guild
-            .set_commands(
-                &ctx.http,
-                vec![
-                    CreateCommand::new("played")
-                        .description("Marquer un jeu comme joué, et dire qui y a joué")
-                        .add_option(
-                            CreateCommandOption::new(CommandOptionType::String, "jeu", "Le jeu")
-                                .required(true)
-                                .set_autocomplete(true),
-                        ),
-                    CreateCommand::new("missing").description(
-                        "Les jeux que tu n'as pas encore notés (et te renvoyer les demandes)",
-                    ),
-                ],
-            )
-            .await?;
-        Ok(())
     }
 
     /// Avatars for the site, fetched once at start.
@@ -297,19 +259,6 @@ impl Bot {
         match self.app.store.set_grade(&key, person, phase, grade).await {
             Ok(change) => {
                 let _ = msg.react(&ctx.http, THUMBS_UP).await;
-                if let Some(previous) = change.previous {
-                    msg.reply(
-                        &ctx.http,
-                        format!(
-                            "Note {} modifiée pour {} : {} → {}",
-                            phase.label(),
-                            change.game,
-                            votes::fmt_grade(previous),
-                            votes::fmt_grade(grade)
-                        ),
-                    )
-                    .await?;
-                }
                 tracing::info!(
                     "{person} graded {} ({}) {grade}",
                     change.game,
@@ -358,71 +307,6 @@ impl Bot {
                 }
             }
         }
-        Ok(())
-    }
-
-    // ---- slash commands --------------------------------------------------
-
-    async fn autocomplete(&self, ctx: &Context, cmd: &CommandInteraction) -> anyhow::Result<()> {
-        let typed = cmd
-            .data
-            .autocomplete()
-            .map(|o| o.value.to_lowercase())
-            .unwrap_or_default();
-        let snapshot = self.app.store.current().await;
-        let mut response = CreateAutocompleteResponse::new();
-        // Unplayed games first: those are the ones being marked.
-        let mut games: Vec<_> = snapshot
-            .games
-            .iter()
-            .filter(|g| g.name.to_lowercase().contains(&typed))
-            .collect();
-        games.sort_by_key(|g| (g.played, g.name.to_lowercase()));
-        for g in games.into_iter().take(25) {
-            let label = if g.played {
-                format!("{} (déjà joué)", g.name)
-            } else {
-                g.name.clone()
-            };
-            response = response.add_string_choice(truncate(&label, 100), g.slug.clone());
-        }
-        cmd.create_response(&ctx.http, CreateInteractionResponse::Autocomplete(response))
-            .await?;
-        Ok(())
-    }
-
-    async fn cmd_played(&self, ctx: &Context, cmd: &CommandInteraction) -> anyhow::Result<()> {
-        let slug = cmd
-            .data
-            .options
-            .iter()
-            .find(|o| o.name == "jeu")
-            .and_then(|o| match &o.value {
-                CommandDataOptionValue::String(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        let snapshot = self.app.store.current().await;
-        let game = snapshot.games.iter().find(|g| g.slug == slug).or_else(|| {
-            snapshot
-                .games
-                .iter()
-                .find(|g| g.name.eq_ignore_ascii_case(&slug))
-        });
-        let message = match game {
-            None => CreateInteractionResponseMessage::new()
-                .content("Je ne trouve pas ce jeu : choisis-le dans la liste proposée.")
-                .ephemeral(true),
-            Some(game) => {
-                let me = self.app.settings.person_for(cmd.user.id.get());
-                CreateInteractionResponseMessage::new()
-                    .content(format!("Qui a joué à **{}** ?", game.name))
-                    .components(vec![players_menu(&game.slug, &snapshot, me)])
-                    .ephemeral(true)
-            }
-        };
-        cmd.create_response(&ctx.http, CreateInteractionResponse::Message(message))
-            .await?;
         Ok(())
     }
 
@@ -489,54 +373,6 @@ impl Bot {
                 }
             }
         }
-        Ok(())
-    }
-
-    async fn cmd_missing(&self, ctx: &Context, cmd: &CommandInteraction) -> anyhow::Result<()> {
-        let Some(person) = self
-            .app
-            .settings
-            .person_for(cmd.user.id.get())
-            .map(str::to_string)
-        else {
-            cmd.create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Tu n'es pas dans la liste des votants.")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-            return Ok(());
-        };
-        cmd.defer_ephemeral(&ctx.http).await?;
-        let snapshot = self.app.store.current().await;
-        let missing = missing_for(&snapshot, &person);
-        let content = if missing.is_empty() {
-            "Tu as tout noté 🎉".to_string()
-        } else {
-            let limit = self.app.settings.reminder_limit(&person).unwrap_or(10) as usize;
-            let mut text = format!("Il te manque {} note(s) :\n", missing.len());
-            for (key, phase) in missing.iter().take(20) {
-                let name = snapshot.game(key).map(|g| g.name.as_str()).unwrap_or("?");
-                text += &format!("• {name} ({})\n", phase.label());
-            }
-            if missing.len() > 20 {
-                text += "…\n";
-            }
-            let sent = missing.len().min(limit);
-            for (key, phase) in missing.iter().take(sent) {
-                self.send_request(&ctx.http, &snapshot, key, &person, *phase)
-                    .await;
-            }
-            text + &format!("Je t'envoie les {sent} premières demandes en DM.")
-        };
-        cmd.edit_response(
-            &ctx.http,
-            EditInteractionResponse::new().content(truncate(&content, 1900)),
-        )
-        .await?;
         Ok(())
     }
 
@@ -671,11 +507,4 @@ pub async fn history(http: &Http, channel: ChannelId, after: u64) -> anyhow::Res
         }
     }
     Ok(out)
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    s.chars().take(max - 1).collect::<String>() + "…"
 }

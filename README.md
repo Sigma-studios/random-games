@@ -10,10 +10,9 @@ can keep editing it, and the site reads it.
 - Vote requests arrive by DM; **replying with a grade writes it to the sheet at
   once** (👍), an invalid one gets 👎 and an explanation, and replying again
   changes the grade.
-- `/played <game>` marks a game played and asks who played; those players then
-  get a request for their grade *after* playing. A game marked played by hand in
-  the sheet gets the same "who played?" question in the thread.
-- `/missing` lists your missing grades and sends you the requests.
+- When a game is marked played on the sheet, the bot asks "who played?" in the
+  thread (a menu of names); those players then get a request for their grade
+  *after* playing.
 - Every day at 18:00 (Europe/Paris), reminders for missing grades, and
   optionally a Steam price update. If the bot was off at that time, it runs on
   start-up.
@@ -41,9 +40,7 @@ All through the environment:
 | `DATA_DIR` | where `state.json` is kept (default `data`); the old bot's `state.json` can be copied there as is |
 | `LISTEN` | the site's address (default `0.0.0.0:8080`) |
 
-The Discord application needs the **Message Content** intent, and the bot must
-be in the server with the `bot` and `applications.commands` scopes (for the
-slash commands).
+The Discord application needs the **Message Content** intent.
 
 ## Running it on façade
 

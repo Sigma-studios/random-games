@@ -159,7 +159,6 @@ pub struct NewGame {
 
 pub struct GradeChange {
     pub game: String,
-    pub previous: Option<f64>,
 }
 
 pub struct Store {
@@ -316,8 +315,8 @@ impl Store {
             .await
     }
 
-    /// Writes one person's grade on a game, wherever its row is now. Returns
-    /// the grade it replaced.
+    /// Writes one person's grade on a game, wherever its row is now (the grade
+    /// it replaced goes to the Journal).
     pub async fn set_grade(
         &self,
         key: &GameKey,
@@ -352,7 +351,6 @@ impl Store {
         };
         let change = GradeChange {
             game: game.name.clone(),
-            previous,
         };
         let event = Event::new(action, key, &game.name)
             .person(person)
