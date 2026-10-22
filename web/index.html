@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Random Games</title>
+  <meta name="description" content="Les jeux proposés, notés et joués par La Session.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">
+      <img src="/favicon.svg" alt="" width="28" height="28">
+      <span>Random Games</span>
+    </a>
+    <nav>
+      <a href="#/" data-nav="home">Jeux</a>
+      <a href="#/joueurs" data-nav="people">Joueurs</a>
+      <a href="#/historique" data-nav="history">Historique</a>
+    </nav>
+    <button class="theme" id="theme" type="button" aria-label="Changer de thème" title="Changer de thème">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+    </button>
+  </header>
+
+  <section class="who" aria-label="Qui compte dans les moyennes">
+    <span class="who-label">Moyennes de</span>
+    <div id="who" class="chips"></div>
+    <button id="who-reset" class="link" type="button" hidden>comme la feuille</button>
+  </section>
+
+  <main id="view" aria-live="polite">
+    <p class="muted loading">Chargement…</p>
+  </main>
+
+  <footer class="foot">
+    <span id="updated"></span>
+    <span>Données : la feuille de La Session, notes données sur Discord.</span>
+  </footer>
+
+  <script src="/vendor/echarts.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
