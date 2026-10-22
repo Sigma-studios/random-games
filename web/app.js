@@ -223,7 +223,7 @@ function home() {
       <p class="hint">Les jeux pas encore joués, par note moyenne avant d'y jouer.</p>
       ${gameTable("toplay", toPlay, [
         { label: "Note", num: true, key: "avg_before", cell: (g) => gradeBar(g.avg_before) },
-        { label: "Votes", num: true, key: "votes_before", cell: (g) => g.votes_before },
+        { label: "Votes", num: true, key: "votes_before", cell: (g) => votesCell(g, "before") },
         { label: "Proposé par", key: "proposer", cell: (g) => person(g.proposer) },
         { label: "Prix", num: true, key: "price", cell: (g) => price(g.price) },
       ])}
@@ -901,7 +901,67 @@ document.addEventListener("click", (e) => {
     set.has(name) ? set.delete(name) : set.add(name);
     if (!set.size) return; // averages need someone
     state.include = set;
-    load().then(render, showError);
+    // ---------- votes tooltip ----------
+
+// The vote count, which reveals who voted what on hover or keyboard focus.
+function votesCell(g, phase) {
+  const n = phase === "before" ? g.votes_before : g.votes_after;
+  const all = Object.keys(phase === "before" ? g.before : g.after).length;
+  if (!all) return `<span class="num">${n}</span>`;
+  return `<span class="votes num" tabindex="0" data-votes="${esc(g.slug)}:${phase}">${n}</span>`;
+}
+
+function votesTip(slug, phase) {
+  const g = gameBySlug(slug);
+  if (!g) return "";
+  const grades = phase === "before" ? g.before : g.after;
+  const rows = Object.entries(grades).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
+    <table>${rows
+      .map(([name, v]) => {
+        const counted = state.data.included.includes(name);
+        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+      })
+      .join("")}</table>`;
+}
+
+const tip = document.createElement("div");
+tip.className = "tip";
+tip.setAttribute("role", "tooltip");
+tip.hidden = true;
+document.body.appendChild(tip);
+
+function showTip(el) {
+  const [slug, phase] = el.dataset.votes.split(":");
+  tip.innerHTML = votesTip(slug, phase);
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let left = r.right - w;
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  tip.style.left = `${left + window.scrollX}px`;
+  tip.style.top = `${top + window.scrollY}px`;
+}
+function hideTip() {
+  tip.hidden = true;
+}
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-votes]");
+  if (el) showTip(el);
+});
+document.addEventListener("mouseout", (e) => {
+  if (e.target.closest("[data-votes]")) hideTip();
+});
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest("[data-votes]");
+  el ? showTip(el) : hideTip();
+});
+document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());
+window.addEventListener("hashchange", hideTip);
+
+load().then(render, showError);
     return;
   }
   const toggle = e.target.closest("[data-table-toggle]");
@@ -913,7 +973,67 @@ document.addEventListener("click", (e) => {
 });
 $("#who-reset").addEventListener("click", () => {
   state.include = null;
-  load().then(render, showError);
+  // ---------- votes tooltip ----------
+
+// The vote count, which reveals who voted what on hover or keyboard focus.
+function votesCell(g, phase) {
+  const n = phase === "before" ? g.votes_before : g.votes_after;
+  const all = Object.keys(phase === "before" ? g.before : g.after).length;
+  if (!all) return `<span class="num">${n}</span>`;
+  return `<span class="votes num" tabindex="0" data-votes="${esc(g.slug)}:${phase}">${n}</span>`;
+}
+
+function votesTip(slug, phase) {
+  const g = gameBySlug(slug);
+  if (!g) return "";
+  const grades = phase === "before" ? g.before : g.after;
+  const rows = Object.entries(grades).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
+    <table>${rows
+      .map(([name, v]) => {
+        const counted = state.data.included.includes(name);
+        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+      })
+      .join("")}</table>`;
+}
+
+const tip = document.createElement("div");
+tip.className = "tip";
+tip.setAttribute("role", "tooltip");
+tip.hidden = true;
+document.body.appendChild(tip);
+
+function showTip(el) {
+  const [slug, phase] = el.dataset.votes.split(":");
+  tip.innerHTML = votesTip(slug, phase);
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let left = r.right - w;
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  tip.style.left = `${left + window.scrollX}px`;
+  tip.style.top = `${top + window.scrollY}px`;
+}
+function hideTip() {
+  tip.hidden = true;
+}
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-votes]");
+  if (el) showTip(el);
+});
+document.addEventListener("mouseout", (e) => {
+  if (e.target.closest("[data-votes]")) hideTip();
+});
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest("[data-votes]");
+  el ? showTip(el) : hideTip();
+});
+document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());
+window.addEventListener("hashchange", hideTip);
+
+load().then(render, showError);
 });
 $("#theme").addEventListener("click", () => {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -934,6 +1054,66 @@ window.addEventListener("resize", () => {
 function showError(err) {
   $("#view").innerHTML = `<p class="empty">Impossible de charger les données (${esc(err.message)}). <button class="link" onclick="location.reload()">Réessayer</button></p>`;
 }
+
+// ---------- votes tooltip ----------
+
+// The vote count, which reveals who voted what on hover or keyboard focus.
+function votesCell(g, phase) {
+  const n = phase === "before" ? g.votes_before : g.votes_after;
+  const all = Object.keys(phase === "before" ? g.before : g.after).length;
+  if (!all) return `<span class="num">${n}</span>`;
+  return `<span class="votes num" tabindex="0" data-votes="${esc(g.slug)}:${phase}">${n}</span>`;
+}
+
+function votesTip(slug, phase) {
+  const g = gameBySlug(slug);
+  if (!g) return "";
+  const grades = phase === "before" ? g.before : g.after;
+  const rows = Object.entries(grades).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
+    <table>${rows
+      .map(([name, v]) => {
+        const counted = state.data.included.includes(name);
+        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+      })
+      .join("")}</table>`;
+}
+
+const tip = document.createElement("div");
+tip.className = "tip";
+tip.setAttribute("role", "tooltip");
+tip.hidden = true;
+document.body.appendChild(tip);
+
+function showTip(el) {
+  const [slug, phase] = el.dataset.votes.split(":");
+  tip.innerHTML = votesTip(slug, phase);
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let left = r.right - w;
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  tip.style.left = `${left + window.scrollX}px`;
+  tip.style.top = `${top + window.scrollY}px`;
+}
+function hideTip() {
+  tip.hidden = true;
+}
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-votes]");
+  if (el) showTip(el);
+});
+document.addEventListener("mouseout", (e) => {
+  if (e.target.closest("[data-votes]")) hideTip();
+});
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest("[data-votes]");
+  el ? showTip(el) : hideTip();
+});
+document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());
+window.addEventListener("hashchange", hideTip);
 
 load().then(render, showError);
 // The sheet is re-read every two minutes; so is the page, quietly.
