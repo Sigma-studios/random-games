@@ -2,6 +2,7 @@
 //! site of its statistics. The Google Sheet stays the storage.
 
 mod app;
+mod backfill;
 mod bot;
 mod config;
 mod google;
@@ -36,9 +37,12 @@ async fn main() -> anyhow::Result<()> {
     {
         return preview(file).await;
     }
-    if !args.is_empty() {
+    let backfill = args.as_slice() == ["backfill"];
+    if !args.is_empty() && !backfill {
         anyhow::bail!(
-            "usage: random-games            (bot and site, configured by the environment)\n       random-games preview <ranges.json>   (the site only, over saved sheet ranges)"
+            "usage: random-games                        bot and site, configured by the environment\n       \
+             random-games backfill               date the past in an empty Journal, from Discord's history\n       \
+             random-games preview <ranges.json>  the site only, over saved sheet ranges"
         );
     }
     let config = Config::from_env()?;
@@ -61,6 +65,9 @@ async fn main() -> anyhow::Result<()> {
         settings,
         avatars: Default::default(),
     });
+    if backfill {
+        return backfill::run(&app, &config.discord_token).await;
+    }
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("cannot listen on {}", config.listen))?;

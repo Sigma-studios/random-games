@@ -650,7 +650,7 @@ pub async fn ask_who_played(
 }
 
 /// Every message of a channel after `after`, oldest first.
-async fn history(http: &Http, channel: ChannelId, after: u64) -> anyhow::Result<Vec<Message>> {
+pub async fn history(http: &Http, channel: ChannelId, after: u64) -> anyhow::Result<Vec<Message>> {
     let mut out: Vec<Message> = Vec::new();
     let mut cursor = after;
     loop {
