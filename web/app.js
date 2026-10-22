@@ -654,11 +654,6 @@ function people() {
       <div class="table-wrap">${recapTable()}</div>
     </section>
     <section class="card">
-      <div class="card-head"><h2>Votes manquants</h2></div>
-      <p class="hint">Les jeux pas encore joués que chacun n'a pas encore notés. Survolez un nombre pour voir les jeux.</p>
-      <div class="table-wrap">${missingTable()}</div>
-    </section>
-    <section class="card">
       <div class="card-head"><h2>Qui note qui</h2>
         <div class="seg" role="group" aria-label="Notes">
           <button type="button" data-phase="before" aria-pressed="${state.matrixPhase === "before"}">Avant d'y jouer</button>
@@ -671,7 +666,12 @@ function people() {
     <div class="grid two">
       ${chartCard("c-spread", "Comment chacun note", "Répartition des notes données par chacun, avant et après avoir joué : la boîte va du premier au troisième quartile, le trait est la médiane.", spreadTable, "tall")}
       ${chartCard("c-proposals", "Propositions", "Jeux proposés par chacun, et combien ont été joués.", proposalsTable, "tall")}
-    </div>`;
+    </div>
+    <section class="card">
+      <div class="card-head"><h2>Votes manquants</h2></div>
+      <p class="hint">Les jeux pas encore joués que chacun n'a pas encore notés. Survolez un nombre pour voir les jeux.</p>
+      <div class="table-wrap">${missingTable()}</div>
+    </section>`;
   document.querySelectorAll("[data-phase]").forEach((b) =>
     b.addEventListener("click", () => {
       state.matrixPhase = b.dataset.phase;
