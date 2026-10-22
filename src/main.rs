@@ -83,7 +83,20 @@ async fn main() -> anyhow::Result<()> {
     tokio::select! {
         r = bot::run(app, &config.discord_token) => r.context("Discord"),
         r = site => r?.context("site"),
+        _ = shutdown() => Ok(()),
     }
+}
+
+/// SIGTERM (a container stop) or Ctrl-C. Writes are single API calls and the
+/// state file is replaced atomically, so stopping between them loses nothing.
+async fn shutdown() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("SIGTERM handler");
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    tracing::info!("stopping");
 }
 
 /// The site alone, read-only, over sheet ranges saved in a file: for working
@@ -109,5 +122,8 @@ async fn preview(file: &str) -> anyhow::Result<()> {
     let listen = std::env::var("LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     tracing::info!("preview on http://{listen}");
-    web::serve(app, listener).await
+    tokio::select! {
+        r = web::serve(app, listener) => r,
+        _ = shutdown() => Ok(()),
+    }
 }
