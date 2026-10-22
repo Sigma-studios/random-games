@@ -250,3 +250,9 @@ tbody tr:last-child td { border-bottom: 0; }
 
 /* Chart tooltips (ECharts injects them; these classes are in their HTML) */
 .tip-muted { color: var(--muted); font-size: 12px; }
+
+/* A history line is a row of centred pieces, so an avatar and its name line
+   up with the text around them. */
+.events li { align-items: center; }
+.events li > div { display: flex; flex-wrap: wrap; align-items: center; column-gap: 0.3em; row-gap: 2px; }
+.facts dd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
