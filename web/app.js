@@ -73,6 +73,38 @@ function delta(v) {
   return `<span class="num ${cls}">${arrow} ${esc(signed(v))}</span>`;
 }
 
+// ---------- tooltips ----------
+
+// Everything known about a game, for chart tooltips.
+function tipGame(g) {
+  if (!g) return "";
+  const grades = (m) =>
+    Object.entries(m)
+      .sort((a, b) => b[1] - a[1])
+      .map(([n, v]) => `${esc(n)} ${fmt(v)}`)
+      .join(" · ");
+  const lines = [
+    `<b>${esc(g.name)}</b>`,
+    `Proposé par ${esc(g.proposer || "–")} · ${esc(price(g.price))}${g.added_at ? ` · ajouté le ${esc(dateFr(g.added_at))}` : ""}`,
+    `Avant d'y jouer : <b>${fmt(g.avg_before)}</b> (${g.votes_before} vote${g.votes_before > 1 ? "s" : ""})`,
+  ];
+  if (Object.keys(g.before).length) lines.push(`<span class="tip-muted">${grades(g.before)}</span>`);
+  if (g.played) {
+    lines.push(`Après : <b>${fmt(g.avg_after)}</b> (${g.votes_after} vote${g.votes_after > 1 ? "s" : ""})${g.diff != null ? ` · écart ${esc(signed(g.diff))}` : ""}`);
+    if (Object.keys(g.after).length) lines.push(`<span class="tip-muted">${grades(g.after)}</span>`);
+    lines.push(`Joué${g.played_at ? ` le ${esc(dateFr(g.played_at))}` : ""}${g.players?.length ? ` par ${esc(g.players.join(", "))}` : ""}`);
+  } else {
+    lines.push('<span class="tip-muted">Pas encore joué</span>');
+  }
+  return lines.join("<br>");
+}
+// Up to `max` game names, then "et N autres".
+function gameList(games, max = 8) {
+  const names = games.slice(0, max).map((g) => esc(g.name));
+  if (games.length > max) names.push(`et ${games.length - max} autres`);
+  return names.join(", ");
+}
+
 // ---------- charts ----------
 
 function baseOption() {
@@ -82,10 +114,11 @@ function baseOption() {
     textStyle: { fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif', color: ink2 },
     grid: { left: 8, right: 16, top: 28, bottom: 8, containLabel: true },
     tooltip: {
+      confine: true,
       backgroundColor: css("--surface"),
       borderColor: css("--ring"),
       textStyle: { color: css("--ink"), fontSize: 13 },
-      extraCssText: "box-shadow: 0 4px 16px rgba(0,0,0,.12); border-radius: 10px;",
+      extraCssText: "box-shadow: 0 4px 16px rgba(0,0,0,.12); border-radius: 10px; max-width: 340px; white-space: normal; line-height: 1.45;",
     },
     legend: { top: 0, left: 0, icon: "circle", itemWidth: 9, itemHeight: 9, textStyle: { color: ink2 } },
   };
@@ -409,10 +442,7 @@ function drawComebacks() {
       tooltip: {
         ...o.tooltip,
         trigger: "item",
-        formatter: (p) => {
-          const g = rows[p.dataIndex];
-          return `<b>${esc(g.name)}</b><br>${fmt(g.avg_before)} → ${fmt(g.avg_after)} (${esc(signed(g.diff))})`;
-        },
+        formatter: (p) => tipGame(rows[p.dataIndex]),
       },
       xAxis: axis({ type: "value", splitLine: { lineStyle: { color: css("--grid") } } }),
       yAxis: axis({ type: "category", data: rows.map((g) => g.name), axisLabel: { color: css("--ink-2"), width: 150, overflow: "truncate" } }),
@@ -496,7 +526,7 @@ function drawPriceScatter() {
       tooltip: {
         ...o.tooltip,
         trigger: "item",
-        formatter: (p) => `<b>${esc(p.data.name)}</b><br>${esc(price(p.data.price))} · note ${fmt(p.data.value[1])}`,
+        formatter: (p) => tipGame(gameBySlug(p.data.slug)),
       },
       xAxis: [
         axis({
@@ -548,10 +578,11 @@ function weeks() {
   };
   const first = start(evs[0].at), last = start(new Date());
   const out = [];
-  for (let w = new Date(first); w <= last; w.setDate(w.getDate() + 7)) out.push({ week: new Date(w), grades: 0, added: 0 });
+  for (let w = new Date(first); w <= last; w.setDate(w.getDate() + 7)) out.push({ week: new Date(w), grades: 0, added: 0, events: [] });
   for (const e of evs) {
     const i = Math.round((start(e.at) - first) / (7 * 864e5));
     if (!out[i]) continue;
+    out[i].events.push(e);
     if (e.action === "grade_before" || e.action === "grade_after") out[i].grades++;
     if (e.action === "added") out[i].added++;
   }
@@ -577,7 +608,26 @@ function drawActivity() {
   const o = baseOption();
   mountChart("c-activity", {
     ...o,
-    tooltip: { ...o.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: {
+      ...o.tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (ps) => {
+        const w = ws[ps[0].dataIndex];
+        const graded = w.events.filter((e) => e.action === "grade_before" || e.action === "grade_after");
+        const by = {};
+        for (const e of graded) by[e.person] = (by[e.person] || 0) + 1;
+        const added = w.events.filter((e) => e.action === "added");
+        const played = w.events.filter((e) => e.action === "played");
+        const lines = [`<b>Semaine du ${esc(dateFr(w.week))}</b>`, `${w.grades} note${w.grades > 1 ? "s" : ""} données`];
+        if (graded.length)
+          lines.push(`<span class="tip-muted">${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${esc(n)} ${k}`).join(" · ")}</span>`);
+        lines.push(`${w.added} jeu${w.added > 1 ? "x" : ""} proposé${w.added > 1 ? "s" : ""}`);
+        if (added.length) lines.push(`<span class="tip-muted">${gameList(added.map((e) => ({ name: `${e.game} (${e.person ?? "?"})` })))}</span>`);
+        if (played.length) lines.push(`Joués : ${gameList(played.map((e) => ({ name: e.game })))}`);
+        return lines.join("<br>");
+      },
+    },
     xAxis: axis({ type: "category", data: ws.map((w) => dateFr(w.week, { day: "numeric", month: "short" })) }),
     yAxis: axis({ type: "value", minInterval: 1 }),
     series: [
@@ -729,7 +779,22 @@ function drawMatrix() {
     tooltip: {
       ...o.tooltip,
       trigger: "item",
-      formatter: (p) => `<b>${esc(names[p.value[1]])}</b> → jeux de <b>${esc(names[p.value[0]])}</b><br>note moyenne ${fmt(p.value[2])}`,
+      formatter: (p) => {
+        const giver = names[p.value[1]], proposer = names[p.value[0]];
+        const phase = state.matrixPhase;
+        const graded = state.data.games
+          .filter((g) => g.proposer === proposer && (phase === "before" ? !g.played : g.played))
+          .map((g) => ({ g, v: (phase === "before" ? g.before : g.after)[giver] }))
+          .filter((x) => x.v != null)
+          .sort((a, b) => b.v - a.v);
+        const top = graded[0], bottom = graded[graded.length - 1];
+        return [
+          `<b>${esc(giver)}</b> → jeux de <b>${esc(proposer)}</b> (${phase === "before" ? "avant d'y jouer" : "après"})`,
+          `Note moyenne <b>${fmt(p.value[2])}</b> sur ${graded.length} jeu${graded.length > 1 ? "x" : ""}`,
+          top ? `La plus haute : ${fmt(top.v)} (${esc(top.g.name)})` : "",
+          bottom && bottom !== top ? `La plus basse : ${fmt(bottom.v)} (${esc(bottom.g.name)})` : "",
+        ].filter(Boolean).join("<br>");
+      },
     },
     xAxis: axis({ type: "category", data: names, position: "top", splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: css("--ink-2") } }),
     yAxis: axis({ type: "category", data: names, inverse: true, splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: css("--ink-2") } }),
@@ -797,7 +862,19 @@ function drawSpread() {
       trigger: "item",
       formatter: (p) => {
         const [, lo, q1, med, q3, hi] = p.data;
-        return `<b>${esc(p.name)}</b> · ${esc(p.seriesName)}<br>médiane ${fmt(med)} · de ${fmt(q1)} à ${fmt(q3)}<br>extrêmes ${fmt(lo)} – ${fmt(hi)}`;
+        const phase = p.seriesIndex === 0 ? "before" : "after";
+        const graded = state.data.games
+          .map((g) => ({ g, v: (phase === "before" ? g.before : g.after)[p.name] }))
+          .filter((x) => x.v != null);
+        const avg = mean(graded.map((x) => x.v));
+        const at = (v) => gameList(graded.filter((x) => x.v === v).map((x) => x.g), 3);
+        return [
+          `<b>${esc(p.name)}</b> · ${esc(p.seriesName)}`,
+          `${graded.length} notes · moyenne <b>${fmt(avg)}</b> · médiane ${fmt(med)}`,
+          `La moitié entre ${fmt(q1)} et ${fmt(q3)}`,
+          `Plus basse ${fmt(lo)} : <span class="tip-muted">${at(lo)}</span>`,
+          `Plus haute ${fmt(hi)} : <span class="tip-muted">${at(hi)}</span>`,
+        ].join("<br>");
       },
     },
     xAxis: axis({ type: "category", data: names, axisLabel: { color: css("--ink-2"), interval: 0 } }),
@@ -821,7 +898,24 @@ function drawProposals() {
   const o = baseOption();
   mountChart("c-proposals", {
     ...o,
-    tooltip: { ...o.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: {
+      ...o.tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (ps) => {
+        const x = s[ps[0].dataIndex];
+        const theirs = state.data.games.filter((g) => g.proposer === x.name);
+        const best = theirs.filter((g) => !g.played && g.avg_before != null).sort((a, b) => b.avg_before - a.avg_before)[0];
+        const bestPlayed = theirs.filter((g) => g.played && g.avg_after != null).sort((a, b) => b.avg_after - a.avg_after)[0];
+        return [
+          `<b>${esc(x.name)}</b>`,
+          `${x.proposed} proposés · ${x.proposed_played} joués (${x.proposed ? Math.round((x.proposed_played / x.proposed) * 100) : 0} %)`,
+          `Note reçue : ${fmt(x.proposed_avg_before)} avant · ${fmt(x.proposed_avg_after)} après`,
+          best ? `Sa meilleure proposition à jouer : ${esc(best.name)} (${fmt(best.avg_before)})` : "",
+          bestPlayed ? `Sa meilleure jouée : ${esc(bestPlayed.name)} (${fmt(bestPlayed.avg_after)})` : "",
+        ].filter(Boolean).join("<br>");
+      },
+    },
     xAxis: axis({ type: "category", data: s.map((x) => x.name), axisLabel: { color: css("--ink-2"), interval: 0 } }),
     yAxis: axis({ type: "value", minInterval: 1 }),
     series: [
@@ -898,7 +992,23 @@ function drawExchange(st) {
   const o = baseOption();
   mountChart("c-exchange", {
     ...o,
-    tooltip: { ...o.tooltip, trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => fmt(v) },
+    tooltip: {
+      ...o.tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (ps) => {
+        const e = rows[ps[0].dataIndex];
+        const count = (proposer, giver, phase) =>
+          state.data.games.filter(
+            (g) => g.proposer === proposer && (phase === "before" ? !g.played : g.played) && (phase === "before" ? g.before : g.after)[giver] != null,
+          ).length;
+        return [
+          `<b>${esc(st.name)}</b> et <b>${esc(e.other)}</b>`,
+          `${esc(e.other)} → jeux de ${esc(st.name)} : <b>${fmt(e.received_before)}</b> avant (${count(st.name, e.other, "before")} jeux) · ${fmt(e.received_after)} après (${count(st.name, e.other, "after")})`,
+          `${esc(st.name)} → jeux de ${esc(e.other)} : <b>${fmt(e.given_before)}</b> avant (${count(e.other, st.name, "before")} jeux) · ${fmt(e.given_after)} après (${count(e.other, st.name, "after")})`,
+        ].join("<br>");
+      },
+    },
     xAxis: axis({ type: "category", data: rows.map((e) => e.other), axisLabel: { color: css("--ink-2"), interval: 0 } }),
     yAxis: axis({ type: "value", min: state.data.vote_min, max: state.data.vote_max }),
     series: [
@@ -933,7 +1043,25 @@ function drawHist(name) {
   const o = baseOption();
   mountChart("c-hist", {
     ...o,
-    tooltip: { ...o.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: {
+      ...o.tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (ps) => {
+        const grade = ps[0].dataIndex + lo;
+        const at = (phase) =>
+          state.data.games.filter((g) => {
+            const v = (phase === "before" ? g.before : g.after)[name];
+            return v != null && Math.round(v) === grade;
+          });
+        const bg = at("before"), ag = at("after");
+        return [
+          `<b>${esc(name)}</b> a donné ${grade} (arrondi)`,
+          `Avant : ${bg.length} fois${bg.length ? ` · <span class="tip-muted">${gameList(bg)}</span>` : ""}`,
+          `Après : ${ag.length} fois${ag.length ? ` · <span class="tip-muted">${gameList(ag)}</span>` : ""}`,
+        ].join("<br>");
+      },
+    },
     xAxis: axis({ type: "category", data: b.map((_, i) => i + lo) }),
     yAxis: axis({ type: "value", minInterval: 1 }),
     series: [
@@ -981,7 +1109,24 @@ function game(slug) {
   const o = baseOption();
   mountChart("c-game", {
     ...o,
-    tooltip: { ...o.tooltip, trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => fmt(v) },
+    tooltip: {
+      ...o.tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (ps) => {
+        const n = names[ps[0].dataIndex];
+        const b = g.before[n], a = g.after[n];
+        const sum = state.data.summaries.find((x) => x.name === n);
+        return [
+          `<b>${esc(n)}</b> sur ${esc(g.name)}`,
+          `Avant : <b>${fmt(b)}</b>${b != null && g.avg_before != null ? ` <span class="tip-muted">(groupe ${fmt(g.avg_before)})</span>` : ""}`,
+          g.played ? `Après : <b>${fmt(a)}</b>${a != null && g.avg_after != null ? ` <span class="tip-muted">(groupe ${fmt(g.avg_after)})</span>` : ""}` : "",
+          b != null && a != null ? `Écart ${esc(signed(round2(a - b)))}` : "",
+          g.players && !g.players.includes(n) ? '<span class="tip-muted">N\'a pas joué</span>' : "",
+          sum ? `<span class="tip-muted">Note moyenne qu'il/elle donne : ${fmt(sum.given_avg_before)} avant, ${fmt(sum.given_avg_after)} après</span>` : "",
+        ].filter(Boolean).join("<br>");
+      },
+    },
     xAxis: axis({ type: "category", data: names, axisLabel: { color: css("--ink-2"), interval: 0 } }),
     yAxis: axis({ type: "value", min: state.data.vote_min, max: state.data.vote_max }),
     series: [

@@ -247,3 +247,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .chips.small .chip img { width: 20px; height: 20px; }
 .tip-list { margin: 0; padding-left: 16px; }
 .tip-list li { padding: 1px 0; }
+
+/* Chart tooltips (ECharts injects them; these classes are in their HTML) */
+.tip-muted { color: var(--muted); font-size: 12px; }
