@@ -38,6 +38,7 @@ All through the environment:
 | `GOOGLE_SERVICE_ACCOUNT` | the service account key, as JSON (the sheet must be shared with its email) |
 | `BOT_CONFIG` | the old bot's `config.json` without its secrets: same keys (`thread_id`, `spreadsheet_id`, `vote_users`, `columns`, `run_actions`, `max_reminders_per_person`, …), plus optional `daily_time` (`"18:00:00"`), `timezone`, `journal_sheet`, `included_range` (`"Recap!A9:B14"`) |
 | `DATA_DIR` | where `state.json` is kept (default `data`); the old bot's `state.json` can be copied there as is |
+| `SEED_STATE` | optional: the old bot's `state.json` contents, used when `DATA_DIR` has none yet |
 | `LISTEN` | the site's address (default `0.0.0.0:8080`) |
 
 The Discord application needs the **Message Content** intent.

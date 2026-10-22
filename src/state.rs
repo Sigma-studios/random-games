@@ -1,6 +1,7 @@
 //! What the bot remembers between restarts, in `$DATA_DIR/state.json`. It
-//! reads the old bot's state.json as is, so the switch-over loses nothing: the
-//! last thread message and DM replies it saw, and when reminders last went out.
+//! reads the old bot's state.json as is (copied there, or given in SEED_STATE
+//! for a first start), so the switch-over loses nothing: the last thread
+//! message and DM replies it saw, and when reminders last went out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -42,7 +43,14 @@ impl StateFile {
         let state = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .with_context(|| format!("{} is not valid", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
+            // A first start can be handed the old bot's state.json in SEED_STATE.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match std::env::var("SEED_STATE")
+            {
+                Ok(seed) if !seed.trim().is_empty() => {
+                    serde_json::from_str(&seed).context("SEED_STATE is not a state.json")?
+                }
+                _ => State::default(),
+            },
             Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
         };
         Ok(StateFile {
