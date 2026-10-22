@@ -290,8 +290,9 @@ function bindSortable() {
     th.addEventListener("click", () => {
       const [table, key] = th.dataset.sort.split(":");
       const cur = state.filters.sort;
-      const dir = cur && cur.table === table && cur.key === key ? -cur.dir : -1;
-      state.filters.sort = { table, key, dir };
+      // Descending, then ascending, then back to the table's own order.
+      const same = cur && cur.table === table && cur.key === key;
+      state.filters.sort = !same ? { table, key, dir: -1 } : cur.dir < 0 ? { table, key, dir: 1 } : null;
       render();
     }),
   );
