@@ -204,7 +204,7 @@ tbody tr:last-child td { border-bottom: 0; }
 /* Player & game headers */
 .hero-avatar { width: 64px; height: 64px; border-radius: 50%; }
 .game-hero { display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: 20px; align-items: start; margin-bottom: 16px; }
-.game-hero img { width: 100%; border-radius: var(--radius); aspect-ratio: 460 / 215; object-fit: cover; background: var(--surface-2); }
+.game-hero > img { width: 100%; border-radius: var(--radius); aspect-ratio: 460 / 215; object-fit: cover; background: var(--surface-2); }
 @media (max-width: 760px) { .game-hero { grid-template-columns: minmax(0, 1fr); } }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; }
 .facts dt { color: var(--muted); font-size: 13px; }
