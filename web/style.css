@@ -80,7 +80,7 @@ button { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--ring);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; text-decoration: none; }
-.brand img { border-radius: 7px; }
+.brand img { width: 32px; height: 32px; object-fit: contain; }
 .top nav { display: flex; gap: 4px; flex: 1; }
 .top nav a {
   text-decoration: none; padding: 6px 12px; border-radius: 999px; color: var(--ink-2);

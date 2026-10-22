@@ -57,7 +57,8 @@ fn router(site: Arc<Site>) -> Router {
             "/vendor/echarts.min.js",
             get(|| async { asset("echarts.min.js") }),
         )
-        .route("/favicon.svg", get(|| async { asset("favicon.svg") }))
+        .route("/logo.png", get(|| async { asset("logo.png") }))
+        .route("/favicon.png", get(|| async { asset("favicon.png") }))
         .route("/api/data", get(data))
         .route("/avatars/{name}", get(avatar))
         .route("/covers/{id}", get(cover))
@@ -83,7 +84,8 @@ fn asset(name: &str) -> Response {
             include_bytes!("../web/vendor/echarts.min.js"),
             "text/javascript; charset=utf-8",
         ),
-        "favicon.svg" => (include_bytes!("../web/favicon.svg"), "image/svg+xml"),
+        "logo.png" => (include_bytes!("../web/logo.png"), "image/png"),
+        "favicon.png" => (include_bytes!("../web/favicon.png"), "image/png"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     let cache = if name == "echarts.min.js" {
