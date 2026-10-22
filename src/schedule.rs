@@ -43,10 +43,14 @@ async fn daily(app: Arc<App>, http: Arc<Http>) {
     let _ = app
         .state
         .update(|st| {
+            // A first start knows of no run at all: it waits for the next
+            // scheduled time rather than sending reminders at once.
             if st.last_daily_run.is_none() {
-                st.last_daily_run = st
-                    .last_reminders_sent_at
-                    .map(|t| t.with_timezone(&s.timezone).date_naive());
+                st.last_daily_run = Some(
+                    st.last_reminders_sent_at
+                        .map(|t| t.with_timezone(&s.timezone).date_naive())
+                        .unwrap_or_else(|| latest_due_day(Utc::now(), s.daily_time, s.timezone)),
+                );
             }
         })
         .await;

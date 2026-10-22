@@ -68,6 +68,13 @@ async fn main() -> anyhow::Result<()> {
     if backfill {
         return backfill::run(&app, &config.discord_token).await;
     }
+    // A new Journal starts with the past Discord remembers.
+    if app.store.current().await.events.is_empty() {
+        tracing::info!("the Journal is empty: dating past proposals and grades from Discord");
+        if let Err(e) = backfill::run(&app, &config.discord_token).await {
+            tracing::error!("backfill: {e:#}");
+        }
+    }
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("cannot listen on {}", config.listen))?;
