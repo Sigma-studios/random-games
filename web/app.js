@@ -655,7 +655,7 @@ function people() {
     </section>
     <section class="card">
       <div class="card-head"><h2>Votes manquants</h2></div>
-      <p class="hint">Les notes que chacun doit encore : avant d'y jouer sur les jeux pas encore joués, et après sur les jeux auxquels il a joué. Survolez un nombre pour voir les jeux.</p>
+      <p class="hint">Les jeux pas encore joués que chacun n'a pas encore notés. Survolez un nombre pour voir les jeux.</p>
       <div class="table-wrap">${missingTable()}</div>
     </section>
     <section class="card">
@@ -683,26 +683,25 @@ function people() {
   drawProposals();
 }
 
-// Per person, the games still waiting for their grade.
+// Per person, the unplayed games still waiting for their grade. (Grades
+// after playing are left out: few are given, and who played is only known
+// for games marked played through the bot.)
 function missingOf(name) {
   const games = state.data.games;
   const before = games.filter((g) => !g.played && g.before[name] == null);
-  const after = games.filter((g) => g.played && g.players?.includes(name) && g.after[name] == null);
   const owedBefore = games.filter((g) => !g.played).length;
-  return { before, after, owedBefore };
+  return { before, owedBefore };
 }
 function missingTable() {
   const rows = shownNames().map((name) => {
     const m = missingOf(name);
     const done = m.owedBefore ? (m.owedBefore - m.before.length) / m.owedBefore : 1;
-    const count = (list, kind) =>
-      list.length
-        ? `<span class="votes num" tabindex="0" data-missing="${esc(name)}:${kind}">${list.length}</span>`
-        : '<span class="num muted">0</span>';
+    const count = m.before.length
+      ? `<span class="votes num" tabindex="0" data-missing="${esc(name)}">${m.before.length}</span>`
+      : '<span class="num muted">0</span>';
     return [
       cv(person(name), name),
-      cv(count(m.before, "before"), m.before.length),
-      cv(count(m.after, "after"), m.after.length),
+      cv(count, m.before.length),
       cv(
         `<div class="bar-cell"><span class="num">${Math.round(done * 100)} %</span><span class="track"><span class="fill" style="width:${done * 100}%"></span></span></div>`,
         done,
@@ -710,18 +709,17 @@ function missingTable() {
     ];
   });
   // Most owed first: it is a table of shame.
-  rows.sort((a, b) => b[1].v + b[2].v - (a[1].v + a[2].v));
+  rows.sort((a, b) => b[1].v - a[1].v);
   return simpleTable(
     "t-missing",
-    [{ label: "Joueur" }, { label: "Avant d'y jouer", num: true }, { label: "Après y avoir joué", num: true }, { label: "Jeux pas joués notés", num: true }],
+    [{ label: "Joueur" }, { label: "Jeux pas notés", num: true }, { label: "Jeux pas joués notés", num: true }],
     rows,
   );
 }
-function missingTip(name, kind) {
-  const m = missingOf(name);
-  const list = kind === "before" ? m.before : m.after;
+function missingTip(name) {
+  const list = missingOf(name).before;
   const shown = list.slice(0, 15);
-  return `<div class="tip-title">${esc(name)} n'a pas encore noté ${kind === "before" ? "(avant d'y jouer)" : "(après y avoir joué)"}</div>
+  return `<div class="tip-title">${esc(name)} n'a pas encore noté</div>
     <ul class="tip-list">${shown.map((g) => `<li>${esc(g.name)}</li>`).join("")}${list.length > shown.length ? `<li class="muted">et ${list.length - shown.length} autres</li>` : ""}</ul>`;
 }
 
@@ -1247,8 +1245,7 @@ function showTip(el) {
     const [slug, phase] = el.dataset.votes.split(":");
     tip.innerHTML = votesTip(slug, phase);
   } else {
-    const [name, kind] = el.dataset.missing.split(":");
-    tip.innerHTML = missingTip(name, kind);
+    tip.innerHTML = missingTip(el.dataset.missing);
   }
   tip.hidden = false;
   const r = el.getBoundingClientRect();
