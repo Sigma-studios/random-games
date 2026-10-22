@@ -7,7 +7,7 @@ const state = {
   data: null,
   include: null, // null: the sheet's checkboxes
   charts: [],
-  filters: { q: "", proposer: "", maxPrice: null, minVotes: 0, sort: null },
+  filters: { q: "", proposer: "", maxPrice: null, votedBy: [], sort: null },
   history: { action: "", person: "" },
   matrixPhase: "before",
   tables: {}, // chart id -> showing its table
@@ -29,6 +29,10 @@ const dateFr = (iso, opts = { day: "numeric", month: "short", year: "numeric" })
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const round2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 
+// The people switched on at the top: everything shown is about them.
+function shownNames() {
+  return state.data.people.filter((p) => state.data.included.includes(p.name)).map((p) => p.name);
+}
 function gameBySlug(slug) {
   return state.data.games.find((g) => g.slug === slug);
 }
@@ -117,9 +121,37 @@ function chartCard(id, title, hint, table, size = "") {
     ${showing ? `<div class="table-wrap">${table()}</div>` : `<div id="${id}" class="chart ${size}" role="img" aria-label="${esc(title)}"></div>`}
   </section>`;
 }
-function simpleTable(head, rows) {
-  return `<table><thead><tr>${head.map((h) => `<th class="${h.num ? "num" : ""}">${esc(h.label)}</th>`).join("")}</tr></thead>
-    <tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${head[i].num ? "num" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+// A cell shown as `h` and sorted by `v`. Plain numbers sort as themselves,
+// other cells by their text.
+const cv = (h, v) => ({ h, v });
+const cellHtml = (c) => (c && typeof c === "object" ? c.h : c);
+const cellValue = (c) => {
+  if (c && typeof c === "object") return c.v;
+  return typeof c === "number" ? c : String(c ?? "").replace(/<[^>]*>/g, "").trim();
+};
+
+// Shared by every sortable table: descending, ascending, then the table's own
+// order, `key` being whatever identifies the column.
+function sortRows(id, rows, value) {
+  const sort = state.filters.sort?.table === id ? state.filters.sort : null;
+  if (!sort) return { rows, sort };
+  const sorted = [...rows].sort((a, b) => {
+    const x = value(a, sort.key), y = value(b, sort.key);
+    if (x == null || x === "") return 1;
+    if (y == null || y === "") return -1;
+    return (typeof x === "string" ? x.localeCompare(y, "fr") : x - y) * sort.dir;
+  });
+  return { rows: sorted, sort };
+}
+function sortHeader(id, key, label, num, sort) {
+  const s = sort && String(sort.key) === String(key) ? (sort.dir > 0 ? "ascending" : "descending") : null;
+  return `<th class="sortable ${num ? "num" : ""}" data-sort="${id}:${key}" ${s ? `aria-sort="${s}"` : ""}>${esc(label)}${s ? (sort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
+}
+
+function simpleTable(id, head, rows) {
+  const { rows: shown, sort } = sortRows(id, rows, (r, k) => cellValue(r[Number(k)]));
+  return `<table><thead><tr>${head.map((h, i) => sortHeader(id, i, h.label, h.num, sort)).join("")}</tr></thead>
+    <tbody>${shown.map((r) => `<tr>${r.map((c, i) => `<td class="${head[i].num ? "num" : ""}">${cellHtml(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 // ---------- data ----------
@@ -158,6 +190,7 @@ function route() {
 
 function render() {
   if (!state.data) return;
+  state.filters.votedBy = state.filters.votedBy.filter((n) => state.data.included.includes(n));
   disposeCharts();
   const { page, arg } = route();
   document.querySelectorAll("[data-nav]").forEach((a) => {
@@ -172,6 +205,7 @@ function render() {
   const pages = { "": home, joueurs: people, joueur: player, jeu: game, historique: history };
   const y = window.scrollY;
   (pages[page] || home)(arg);
+  bindSortable();
   // A new page starts at the top; a re-render (filters, refresh) stays put.
   const here = location.hash;
   window.scrollTo({ top: here === state.lastHash ? y : 0 });
@@ -189,7 +223,9 @@ function filteredGames(list) {
     .filter((g) => !q || g.name.toLowerCase().includes(q))
     .filter((g) => !f.proposer || g.proposer === f.proposer)
     .filter((g) => f.maxPrice == null || (g.price ?? 0) <= f.maxPrice)
-    .filter((g) => (g.played ? g.votes_after : g.votes_before) >= f.minVotes);
+    // Voté par: everyone picked graded it (before playing, or after for a
+    // played game), so the ranking is the group's own.
+    .filter((g) => f.votedBy.every((n) => (g.played ? g.after : g.before)[n] != null));
 }
 
 function home() {
@@ -215,8 +251,14 @@ function home() {
         ${d.people.map((p) => `<option ${f.proposer === p.name ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
       <label>Prix max : <span id="f-price-v">${f.maxPrice == null ? "tous" : price(f.maxPrice)}</span>
         <input type="range" id="f-price" min="0" max="${maxPrice}" step="1" value="${f.maxPrice ?? maxPrice}"></label>
-      <label>Votes min : <span id="f-votes-v">${f.minVotes}</span>
-        <input type="range" id="f-votes" min="0" max="${d.people.length}" step="1" value="${f.minVotes}"></label>
+      <div class="filter-group"><span class="filter-label">Voté par</span>
+        <div class="chips small">${shownNames()
+          .map(
+            (n) => `<button class="chip" type="button" data-voted="${esc(n)}" aria-pressed="${f.votedBy.includes(n)}">
+              <img src="${esc(avatarUrl(n))}" alt="">${esc(n)}</button>`,
+          )
+          .join("")}</div></div>
+      ${filtersOn() ? '<button class="link" id="f-reset" type="button">Effacer les filtres</button>' : ""}
     </div>
     <section class="card">
       <div class="card-head"><h2>À jouer ensuite</h2><span class="muted">${toPlay.length} jeux</span></div>
@@ -240,15 +282,19 @@ function home() {
     </section>
     <div class="grid two">
       ${chartCard("c-comeback", "Retournements et flops", "Écart entre la note après et la note avant, sur les jeux joués : les 8 plus grandes hausses et baisses.", comebackTable, "tall")}
-      ${chartCard("c-price", "Prix et note", "Chaque point est un jeu : sa note (avant d'y jouer s'il n'est pas joué, après sinon) selon son prix.", priceTable, "tall")}
+      ${chartCard("c-price", "Prix et note", `Chaque point est un jeu : sa note (avant d'y jouer s'il n'est pas joué, après sinon) selon son prix.${filtersOn() ? " <b>Selon les filtres ci-dessus.</b>" : ""}`, priceTable, "tall")}
     </div>
     ${chartCard("c-activity", "Activité", activityHint(), activityTable, "short")}
   `;
   bindHomeFilters(maxPrice);
-  bindSortable();
   drawComebacks();
   drawPriceScatter();
   drawActivity();
+}
+
+function filtersOn() {
+  const f = state.filters;
+  return !!(f.q.trim() || f.proposer || f.maxPrice != null || f.votedBy.length);
 }
 
 function kpi(label, value, note) {
@@ -258,25 +304,10 @@ function kpi(label, value, note) {
 const LIMIT = 15;
 function gameTable(id, games, cols) {
   if (!games.length) return '<p class="empty">Aucun jeu ne correspond aux filtres.</p>';
-  const sort = state.filters.sort?.table === id ? state.filters.sort : null;
-  let rows = games;
-  if (sort) {
-    const col = cols.find((c) => c.key === sort.key);
-    rows = [...games].sort((a, b) => {
-      const x = a[col.key], y = b[col.key];
-      if (x == null) return 1;
-      if (y == null) return -1;
-      return (typeof x === "string" ? x.localeCompare(y) : x - y) * sort.dir;
-    });
-  }
+  const { rows, sort } = sortRows(id, games, (g, key) => g[key]);
   const expanded = state.tables[`more-${id}`];
   const shown = expanded ? rows : rows.slice(0, LIMIT);
-  const head = cols
-    .map((c) => {
-      const s = sort && sort.key === c.key ? (sort.dir > 0 ? "ascending" : "descending") : null;
-      return `<th class="sortable ${c.num ? "num" : ""}" data-sort="${id}:${c.key}" ${s ? `aria-sort="${s}"` : ""}>${esc(c.label)}${s ? (sort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
-    })
-    .join("");
+  const head = cols.map((c) => sortHeader(id, c.key, c.label, c.num, sort)).join("");
   return `<div class="table-wrap"><table>
     <thead><tr><th class="rank">#</th><th>Jeu</th>${head}</tr></thead>
     <tbody>${shown
@@ -332,9 +363,15 @@ function bindHomeFilters(maxPrice) {
     f.maxPrice = v >= maxPrice ? null : v;
     render();
   });
-  $("#f-votes").addEventListener("input", (e) => ($("#f-votes-v").textContent = e.target.value));
-  $("#f-votes").addEventListener("change", (e) => {
-    f.minVotes = Number(e.target.value);
+  document.querySelectorAll("[data-voted]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const n = b.dataset.voted;
+      f.votedBy = f.votedBy.includes(n) ? f.votedBy.filter((x) => x !== n) : [...f.votedBy, n];
+      render();
+    }),
+  );
+  $("#f-reset")?.addEventListener("click", () => {
+    Object.assign(f, { q: "", proposer: "", maxPrice: null, votedBy: [] });
     render();
   });
 }
@@ -347,8 +384,15 @@ function comebackRows() {
 }
 function comebackTable() {
   return simpleTable(
-    [{ label: "Jeu" }, { label: "Avant", num: true }, { label: "Après", num: true }, { label: "Écart", num: true }],
-    comebackRows().map((g) => [gameCell(g), fmt(g.avg_before), fmt(g.avg_after), delta(g.diff)]),
+    "t-comeback",
+    [{ label: "Jeu" }, { label: "Proposé par" }, { label: "Avant", num: true }, { label: "Après", num: true }, { label: "Écart", num: true }],
+    comebackRows().map((g) => [
+      cv(gameCell(g), g.name),
+      cv(person(g.proposer), g.proposer),
+      cv(fmt(g.avg_before), g.avg_before),
+      cv(fmt(g.avg_after), g.avg_after),
+      cv(delta(g.diff), g.diff),
+    ]),
   );
 }
 function drawComebacks() {
@@ -395,8 +439,12 @@ function priceGames() {
 }
 function priceTable() {
   return simpleTable(
-    [{ label: "Jeu" }, { label: "Prix", num: true }, { label: "Note", num: true }, { label: "Joué" }],
-    priceGames().map((g) => [gameCell(g), price(g.price), fmt(g.played ? g.avg_after : g.avg_before), g.played ? "oui" : "non"]),
+    "t-price",
+    [{ label: "Jeu" }, { label: "Proposé par" }, { label: "Prix", num: true }, { label: "Note", num: true }, { label: "Joué" }],
+    priceGames().map((g) => {
+      const v = g.played ? g.avg_after : g.avg_before;
+      return [cv(gameCell(g), g.name), cv(person(g.proposer), g.proposer), cv(price(g.price), g.price), cv(fmt(v), v), g.played ? "oui" : "non"];
+    }),
   );
 }
 function drawPriceScatter() {
@@ -404,31 +452,84 @@ function drawPriceScatter() {
   if (!games.length) return emptyChart("c-price", "Aucun jeu avec un prix et une note.");
   const [c1, c2] = series();
   const surface = css("--surface");
-  const point = (g) => ({ value: [g.price, g.played ? g.avg_after : g.avg_before], slug: g.slug, name: g.name });
+  // Free games get their own strip left of the price axis (there are many,
+  // all at 0 €); paid ones go on an axis of at least 0–10 €, so a filter
+  // never stretches a single price across the chart.
+  const paid = games.filter((g) => g.price > 0);
+  const top = Math.max(10, ...paid.map((g) => g.price));
+  const step = top <= 20 ? 5 : top <= 60 ? 10 : 20;
+  const xMax = Math.ceil(top / step) * step;
+  const spread = (slug) => {
+    let h = 0;
+    for (const c of slug) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return (h % 1000) / 1000;
+  };
+  const grade = (g) => (g.played ? g.avg_after : g.avg_before);
+  const point = (g) => ({
+    value: [g.price > 0 ? g.price : 0.12 + 0.76 * spread(g.slug), grade(g)],
+    price: g.price,
+    slug: g.slug,
+    name: g.name,
+  });
   const o = baseOption();
-  const mk = (name, color, data) => ({
+  const { vote_min: lo, vote_max: hi } = state.data;
+  const mk = (name, color, list, grid) => ({
     name,
     type: "scatter",
+    xAxisIndex: grid,
+    yAxisIndex: grid,
     symbolSize: 10,
-    data,
+    data: list.filter((g) => (grid === 0) === !(g.price > 0)).map(point),
     itemStyle: { color, borderColor: surface, borderWidth: 2, opacity: 0.9 },
     emphasis: { scale: 1.5 },
   });
+  const unplayed = games.filter((g) => !g.played), played = games.filter((g) => g.played);
+  const yBase = { type: "value", min: lo, max: hi, interval: 2 };
   mountChart(
     "c-price",
     {
       ...o,
-      grid: { ...o.grid, top: 48 },
+      grid: [
+        { left: 36, width: 64, top: 48, bottom: 30 },
+        { left: 112, right: 20, top: 48, bottom: 30 },
+      ],
       tooltip: {
         ...o.tooltip,
         trigger: "item",
-        formatter: (p) => `<b>${esc(p.data.name)}</b><br>${esc(price(p.data.value[0]))} · note ${fmt(p.data.value[1])}`,
+        formatter: (p) => `<b>${esc(p.data.name)}</b><br>${esc(price(p.data.price))} · note ${fmt(p.data.value[1])}`,
       },
-      xAxis: axis({ type: "value", name: "Prix (€)", nameLocation: "middle", nameGap: 26, nameTextStyle: { color: css("--muted") } }),
-      yAxis: axis({ type: "value", min: state.data.vote_min, max: state.data.vote_max, name: "Note", nameTextStyle: { color: css("--muted") } }),
+      xAxis: [
+        axis({
+          gridIndex: 0,
+          type: "value",
+          min: 0,
+          max: 1,
+          axisLabel: { show: false },
+          splitLine: { show: false },
+          name: "Gratuit",
+          nameLocation: "middle",
+          nameGap: 12,
+          nameTextStyle: { color: css("--muted") },
+        }),
+        axis({
+          gridIndex: 1,
+          type: "value",
+          min: 0,
+          max: xMax,
+          interval: step,
+          axisLabel: { color: css("--muted"), formatter: (v) => `${v} €` },
+        }),
+      ],
+      yAxis: [
+        axis({ ...yBase, gridIndex: 0, name: "Note", nameTextStyle: { color: css("--muted") } }),
+        axis({ ...yBase, gridIndex: 1, axisLabel: { show: false } }),
+      ],
+      // The same name in both strips: the legend toggles a group as one.
       series: [
-        mk("Pas encore joué (note avant)", c1, games.filter((g) => !g.played).map(point)),
-        mk("Joué (note après)", c2, games.filter((g) => g.played).map(point)),
+        mk("Pas encore joué (note avant)", c1, unplayed, 0),
+        mk("Pas encore joué (note avant)", c1, unplayed, 1),
+        mk("Joué (note après)", c2, played, 0),
+        mk("Joué (note après)", c2, played, 1),
       ],
     },
     (p) => (location.hash = `#/jeu/${encodeURIComponent(p.data.slug)}`),
@@ -464,8 +565,9 @@ function activityHint() {
 }
 function activityTable() {
   return simpleTable(
+    "t-activity",
     [{ label: "Semaine du" }, { label: "Notes", num: true }, { label: "Jeux proposés", num: true }],
-    weeks().map((w) => [esc(dateFr(w.week)), w.grades, w.added]),
+    weeks().map((w) => [cv(esc(dateFr(w.week)), w.week.getTime()), w.grades, w.added]),
   );
 }
 function drawActivity() {
@@ -498,8 +600,13 @@ function people() {
     <div class="page-title"><h1>Joueurs</h1></div>
     <section class="card">
       <div class="card-head"><h2>Récap</h2></div>
-      <p class="hint">Note reçue : la note moyenne des jeux qu'ils ont proposés (selon les personnes cochées en haut). Note donnée : la moyenne de toutes les notes qu'ils ont mises.</p>
+      <p class="hint">Note reçue : la note moyenne des jeux qu'ils ont proposés (selon les personnes incluses en haut). Note donnée : la moyenne de toutes les notes qu'ils ont mises.</p>
       <div class="table-wrap">${recapTable()}</div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Votes manquants</h2></div>
+      <p class="hint">Les notes que chacun doit encore : avant d'y jouer sur les jeux pas encore joués, et après sur les jeux auxquels il a joué. Survolez un nombre pour voir les jeux.</p>
+      <div class="table-wrap">${missingTable()}</div>
     </section>
     <section class="card">
       <div class="card-head"><h2>Qui note qui</h2>
@@ -526,6 +633,48 @@ function people() {
   drawProposals();
 }
 
+// Per person, the games still waiting for their grade.
+function missingOf(name) {
+  const games = state.data.games;
+  const before = games.filter((g) => !g.played && g.before[name] == null);
+  const after = games.filter((g) => g.played && g.players?.includes(name) && g.after[name] == null);
+  const owedBefore = games.filter((g) => !g.played).length;
+  return { before, after, owedBefore };
+}
+function missingTable() {
+  const rows = shownNames().map((name) => {
+    const m = missingOf(name);
+    const done = m.owedBefore ? (m.owedBefore - m.before.length) / m.owedBefore : 1;
+    const count = (list, kind) =>
+      list.length
+        ? `<span class="votes num" tabindex="0" data-missing="${esc(name)}:${kind}">${list.length}</span>`
+        : '<span class="num muted">0</span>';
+    return [
+      cv(person(name), name),
+      cv(count(m.before, "before"), m.before.length),
+      cv(count(m.after, "after"), m.after.length),
+      cv(
+        `<div class="bar-cell"><span class="num">${Math.round(done * 100)} %</span><span class="track"><span class="fill" style="width:${done * 100}%"></span></span></div>`,
+        done,
+      ),
+    ];
+  });
+  // Most owed first: it is a table of shame.
+  rows.sort((a, b) => b[1].v + b[2].v - (a[1].v + a[2].v));
+  return simpleTable(
+    "t-missing",
+    [{ label: "Joueur" }, { label: "Avant d'y jouer", num: true }, { label: "Après y avoir joué", num: true }, { label: "Jeux pas joués notés", num: true }],
+    rows,
+  );
+}
+function missingTip(name, kind) {
+  const m = missingOf(name);
+  const list = kind === "before" ? m.before : m.after;
+  const shown = list.slice(0, 15);
+  return `<div class="tip-title">${esc(name)} n'a pas encore noté ${kind === "before" ? "(avant d'y jouer)" : "(après y avoir joué)"}</div>
+    <ul class="tip-list">${shown.map((g) => `<li>${esc(g.name)}</li>`).join("")}${list.length > shown.length ? `<li class="muted">et ${list.length - shown.length} autres</li>` : ""}</ul>`;
+}
+
 function recapTable() {
   const rows = state.data.summaries;
   return `<table><thead><tr><th>Joueur</th>
@@ -534,7 +683,7 @@ function recapTable() {
       <th class="num">Donnée avant</th><th class="num">Donnée après</th><th class="num">Donnée</th></tr></thead>
     <tbody>${rows
       .map(
-        (s) => `<tr><td>${person(s.name)}${s.included ? "" : ' <span class="tag">pas compté</span>'}</td>
+        (s) => `<tr><td>${person(s.name)}</td>
       <td class="num">${s.proposed}</td><td class="num">${s.proposed_played}</td>
       <td class="num">${fmt(s.proposed_avg_before)}</td><td class="num">${fmt(s.proposed_avg_after)}</td><td class="num"><b>${fmt(s.proposed_avg)}</b></td>
       <td class="num">${fmt(s.given_avg_before)}</td><td class="num">${fmt(s.given_avg_after)}</td><td class="num"><b>${fmt(s.given_avg)}</b></td></tr>`,
@@ -546,15 +695,16 @@ function matrix() {
   return state.matrixPhase === "before" ? state.data.matrix_before : state.data.matrix_after;
 }
 function matrixTable() {
-  const names = state.data.people.map((p) => p.name);
+  const names = shownNames();
   const m = matrix();
   return simpleTable(
+    `t-matrix-${state.matrixPhase}`,
     [{ label: "Note donnée par ↓ à →" }, ...names.map((n) => ({ label: n, num: true }))],
-    names.map((giver) => [person(giver), ...names.map((p) => fmt(m[giver]?.[p]))]),
+    names.map((giver) => [cv(person(giver), giver), ...names.map((p) => cv(fmt(m[giver]?.[p]), m[giver]?.[p]))]),
   );
 }
 function drawMatrix() {
-  const names = state.data.people.map((p) => p.name);
+  const names = shownNames();
   const m = matrix();
   const data = [];
   names.forEach((giver, y) =>
@@ -620,15 +770,22 @@ function gradesOf(name, phase) {
 }
 function spreadTable() {
   return simpleTable(
+    "t-spread",
     [{ label: "Joueur" }, { label: "Notes avant", num: true }, { label: "Médiane avant", num: true }, { label: "Notes après", num: true }, { label: "Médiane après", num: true }],
-    state.data.people.map((p) => {
+    shownNames().map((name) => ({ name })).map((p) => {
       const b = quartiles(gradesOf(p.name, "before")), a = quartiles(gradesOf(p.name, "after"));
-      return [person(p.name), gradesOf(p.name, "before").length, fmt(b?.[2]), gradesOf(p.name, "after").length, fmt(a?.[2])];
+      return [
+        cv(person(p.name), p.name),
+        gradesOf(p.name, "before").length,
+        cv(fmt(b?.[2]), b?.[2]),
+        gradesOf(p.name, "after").length,
+        cv(fmt(a?.[2]), a?.[2]),
+      ];
     }),
   );
 }
 function drawSpread() {
-  const names = state.data.people.map((p) => p.name);
+  const names = shownNames();
   const [c1, c2] = series();
   const o = baseOption();
   const box = (phase) => names.map((n) => quartiles(gradesOf(n, phase)) ?? "-");
@@ -653,8 +810,9 @@ function drawSpread() {
 }
 function proposalsTable() {
   return simpleTable(
+    "t-proposals",
     [{ label: "Joueur" }, { label: "Proposés", num: true }, { label: "Joués", num: true }],
-    state.data.summaries.map((s) => [person(s.name), s.proposed, s.proposed_played]),
+    state.data.summaries.map((s) => [cv(person(s.name), s.name), s.proposed, s.proposed_played]),
   );
 }
 function drawProposals() {
@@ -678,7 +836,12 @@ function drawProposals() {
 function player(name) {
   const d = state.data;
   const st = d.players.find((p) => p.name === name);
-  if (!st) return notFound("Ce joueur n'existe pas.");
+  if (!st)
+    return notFound(
+      d.people.some((p) => p.name === name)
+        ? `${name} n'est pas inclus : active-le en haut de la page pour voir ses statistiques.`
+        : "Ce joueur n'existe pas.",
+    );
   const sum = d.summaries.find((s) => s.name === name);
   const theirs = d.games.filter((g) => g.proposer === name);
   $("#view").innerHTML = `
@@ -702,7 +865,6 @@ function player(name) {
           { label: "Joué", key: "played", cell: (g) => (g.played ? "oui" : '<span class="muted">non</span>') },
         ])}</section>
     </div>`;
-  bindSortable();
   drawExchange(st);
   drawHist(name);
 }
@@ -721,9 +883,13 @@ function extremeCard(title, ex, signedValue = false) {
 }
 
 function exchangeTable(st) {
+  const n = (v) => cv(fmt(v), v);
   return simpleTable(
+    "t-exchange",
     [{ label: "Avec" }, { label: "Il/elle reçoit, avant", num: true }, { label: "après", num: true }, { label: "Il/elle donne, avant", num: true }, { label: "après", num: true }],
-    st.exchanges.filter((e) => e.other !== st.name).map((e) => [person(e.other), fmt(e.received_before), fmt(e.received_after), fmt(e.given_before), fmt(e.given_after)]),
+    st.exchanges
+      .filter((e) => e.other !== st.name)
+      .map((e) => [cv(person(e.other), e.other), n(e.received_before), n(e.received_after), n(e.given_before), n(e.given_after)]),
   );
 }
 function drawExchange(st) {
@@ -755,6 +921,7 @@ function histTable(name) {
   const b = histBins(name, "before"), a = histBins(name, "after");
   const lo = Math.ceil(state.data.vote_min);
   return simpleTable(
+    "t-hist",
     [{ label: "Note", num: true }, { label: "Avant", num: true }, { label: "Après", num: true }],
     b.map((n, i) => [i + lo, n, a[i]]),
   );
@@ -782,7 +949,7 @@ function game(slug) {
   const g = gameBySlug(slug);
   if (!g) return notFound("Ce jeu n'est pas (ou plus) dans la feuille.");
   const evs = state.data.events.filter((e) => e.slug === slug).slice().reverse();
-  const names = state.data.people.map((p) => p.name);
+  const names = shownNames();
   $("#view").innerHTML = `
     <div class="game-hero">
       ${g.cover ? `<img src="${esc(g.cover)}" alt="">` : ""}
@@ -802,8 +969,9 @@ function game(slug) {
     </div>
     ${chartCard("c-game", "Les notes", "La note de chacun, avant et après y avoir joué.", () =>
       simpleTable(
+        "t-game",
         [{ label: "Joueur" }, { label: "Avant", num: true }, { label: "Après", num: true }],
-        names.map((n) => [person(n), fmt(g.before[n]), fmt(g.after[n])]),
+        names.map((n) => [cv(person(n), n), cv(fmt(g.before[n]), g.before[n]), cv(fmt(g.after[n]), g.after[n])]),
       ),
     )}
     <section class="card"><div class="card-head"><h2>Historique</h2></div>
@@ -870,7 +1038,7 @@ function history() {
       <label>Action<select id="h-action"><option value="">Toutes</option>
         ${Object.entries(ACTIONS).map(([k, v]) => `<option value="${k}" ${h.action === k ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
       <label>Personne<select id="h-person"><option value="">Tout le monde</option>
-        ${d.people.map((p) => `<option ${h.person === p.name ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+        ${shownNames().map((n) => `<option ${h.person === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
     </div>
     <section class="card">
       ${shown.length ? `<ul class="events">${shown.map(eventItem).join("")}</ul>` : '<p class="empty">Rien pour l\'instant : le journal commence avec le nouveau bot.</p>'}
@@ -884,7 +1052,6 @@ function history() {
     h.person = e.target.value;
     render();
   });
-  bindSortable();
 }
 
 function notFound(text) {
@@ -919,8 +1086,7 @@ function votesTip(slug, phase) {
   return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
     <table>${rows
       .map(([name, v]) => {
-        const counted = state.data.included.includes(name);
-        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+        return `<tr><td>${person(name, { link: false })}</td><td class="num">${fmt(v)}</td></tr>`;
       })
       .join("")}</table>`;
 }
@@ -932,8 +1098,13 @@ tip.hidden = true;
 document.body.appendChild(tip);
 
 function showTip(el) {
-  const [slug, phase] = el.dataset.votes.split(":");
-  tip.innerHTML = votesTip(slug, phase);
+  if (el.dataset.votes) {
+    const [slug, phase] = el.dataset.votes.split(":");
+    tip.innerHTML = votesTip(slug, phase);
+  } else {
+    const [name, kind] = el.dataset.missing.split(":");
+    tip.innerHTML = missingTip(name, kind);
+  }
   tip.hidden = false;
   const r = el.getBoundingClientRect();
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -948,14 +1119,14 @@ function hideTip() {
   tip.hidden = true;
 }
 document.addEventListener("mouseover", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   if (el) showTip(el);
 });
 document.addEventListener("mouseout", (e) => {
-  if (e.target.closest("[data-votes]")) hideTip();
+  if (e.target.closest("[data-votes], [data-missing]")) hideTip();
 });
 document.addEventListener("focusin", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   el ? showTip(el) : hideTip();
 });
 document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());
@@ -991,8 +1162,7 @@ function votesTip(slug, phase) {
   return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
     <table>${rows
       .map(([name, v]) => {
-        const counted = state.data.included.includes(name);
-        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+        return `<tr><td>${person(name, { link: false })}</td><td class="num">${fmt(v)}</td></tr>`;
       })
       .join("")}</table>`;
 }
@@ -1020,14 +1190,14 @@ function hideTip() {
   tip.hidden = true;
 }
 document.addEventListener("mouseover", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   if (el) showTip(el);
 });
 document.addEventListener("mouseout", (e) => {
-  if (e.target.closest("[data-votes]")) hideTip();
+  if (e.target.closest("[data-votes], [data-missing]")) hideTip();
 });
 document.addEventListener("focusin", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   el ? showTip(el) : hideTip();
 });
 document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());
@@ -1073,8 +1243,7 @@ function votesTip(slug, phase) {
   return `<div class="tip-title">${esc(g.name)} · ${phase === "before" ? "avant d'y jouer" : "après"}</div>
     <table>${rows
       .map(([name, v]) => {
-        const counted = state.data.included.includes(name);
-        return `<tr class="${counted ? "" : "muted"}"><td>${person(name, { link: false })}${counted ? "" : ' <span class="tag">pas compté</span>'}</td><td class="num">${fmt(v)}</td></tr>`;
+        return `<tr><td>${person(name, { link: false })}</td><td class="num">${fmt(v)}</td></tr>`;
       })
       .join("")}</table>`;
 }
@@ -1102,14 +1271,14 @@ function hideTip() {
   tip.hidden = true;
 }
 document.addEventListener("mouseover", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   if (el) showTip(el);
 });
 document.addEventListener("mouseout", (e) => {
-  if (e.target.closest("[data-votes]")) hideTip();
+  if (e.target.closest("[data-votes], [data-missing]")) hideTip();
 });
 document.addEventListener("focusin", (e) => {
-  const el = e.target.closest("[data-votes]");
+  const el = e.target.closest("[data-votes], [data-missing]");
   el ? showTip(el) : hideTip();
 });
 document.addEventListener("keydown", (e) => e.key === "Escape" && hideTip());

@@ -170,7 +170,57 @@ async fn data(State(site): State<Arc<Site>>, Query(q): Query<DataQuery>) -> Resp
     ([(header::CACHE_CONTROL, "no-cache")], axum::Json(body)).into_response()
 }
 
-fn build(snap: &Snapshot, inc: &Included, settings: &crate::config::Settings) -> Data {
+/// The snapshot as if only the included people existed: their grades, their
+/// journal entries, their place in who-played lists. Games stay, whoever
+/// proposed them.
+fn only_included(snap: &Snapshot, inc: &Included) -> Snapshot {
+    let keep = |grades: &BTreeMap<String, f64>| -> BTreeMap<String, f64> {
+        grades
+            .iter()
+            .filter(|(who, _)| inc.contains(who))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect()
+    };
+    Snapshot {
+        people: snap
+            .people
+            .iter()
+            .filter(|p| inc.contains(&p.name))
+            .cloned()
+            .collect(),
+        games: snap
+            .games
+            .iter()
+            .map(|g| crate::model::Game {
+                before: keep(&g.before),
+                after: keep(&g.after),
+                ..g.clone()
+            })
+            .collect(),
+        events: snap
+            .events
+            .iter()
+            .filter(|e| e.person.as_ref().is_none_or(|p| inc.contains(p)))
+            .map(|e| {
+                let mut e = e.clone();
+                if e.action == Action::Played {
+                    e.details = e
+                        .players()
+                        .into_iter()
+                        .filter(|p| inc.contains(p))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                }
+                e
+            })
+            .collect(),
+        fetched_at: snap.fetched_at,
+    }
+}
+
+fn build(full: &Snapshot, inc: &Included, settings: &crate::config::Settings) -> Data {
+    let filtered = only_included(full, inc);
+    let snap = &filtered;
     let slugs: HashMap<&GameKey, &str> = snap
         .games
         .iter()
@@ -222,7 +272,7 @@ fn build(snap: &Snapshot, inc: &Included, settings: &crate::config::Settings) ->
         updated_at: snap.fetched_at,
         vote_min: settings.vote_min,
         vote_max: settings.vote_max,
-        people: snap
+        people: full
             .people
             .iter()
             .map(|p| PersonView {

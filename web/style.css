@@ -240,3 +240,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .tip td { padding: 3px 0; border: 0; }
 .tip td.num { padding-left: 16px; font-weight: 600; }
 .tip tr.muted td.num { font-weight: 400; }
+
+.filter-group { display: grid; gap: 4px; }
+.filter-label { font-size: 12px; color: var(--muted); }
+.chips.small .chip { font-size: 12.5px; padding: 2px 9px 2px 2px; }
+.chips.small .chip img { width: 20px; height: 20px; }
+.tip-list { margin: 0; padding-left: 16px; }
+.tip-list li { padding: 1px 0; }
