@@ -191,8 +191,11 @@ impl Bot {
                 adding.remove(key);
             }
         }
-        result?;
-        tracing::info!("{proposer} proposed {} game(s)", new.len());
+        let added = result?;
+        if added.is_empty() {
+            return Ok(());
+        }
+        tracing::info!("{proposer} proposed {} game(s)", added.len());
         let _ = msg.react(&ctx.http, CHECK).await;
         Ok(())
     }

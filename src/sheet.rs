@@ -411,9 +411,11 @@ impl Store {
 
     /// Adds games as new rows: blank rows in the table first, then the table's
     /// end (or, without a table, inserted rows that copy the formulas above).
-    pub async fn add_games(&self, new: Vec<NewGame>) -> anyhow::Result<()> {
+    /// Games already on the sheet as it is now are left out; the ones added are
+    /// returned.
+    pub async fn add_games(&self, new: Vec<NewGame>) -> anyhow::Result<Vec<NewGame>> {
         if new.is_empty() {
-            return Ok(());
+            return Ok(new);
         }
         let _writing = self.writing.lock().await;
         let rows = self
@@ -426,6 +428,21 @@ impl Store {
         let header = rows.first().cloned().unwrap_or_default();
         let cols = Columns::new(&header, &self.settings)?;
         let data = rows.get(1..).unwrap_or_default();
+        // The cached snapshot the caller checked can be older than a game
+        // another message just added.
+        let present: HashSet<GameKey> = data
+            .iter()
+            .filter_map(|r| {
+                row_key(&r.get(cols.game).map(cell_text).unwrap_or_default()).map(|(k, _, _)| k)
+            })
+            .collect();
+        let new: Vec<NewGame> = new
+            .into_iter()
+            .filter(|g| !present.contains(&g.key))
+            .collect();
+        if new.is_empty() {
+            return Ok(new);
+        }
         let built: Vec<Vec<Value>> = new.iter().map(|g| self.build_row(&cols, g)).collect();
 
         let blanks: Vec<u32> = data
@@ -481,7 +498,7 @@ impl Store {
         self.record(events).await?;
         drop(_writing);
         self.refresh().await?;
-        Ok(())
+        Ok(new)
     }
 
     async fn insert_rows(
@@ -600,6 +617,19 @@ fn append_row(row: &[Value]) -> Value {
     json!({"values": values})
 }
 
+/// A game cell's key, name and link; None for an empty cell.
+fn row_key(cell: &str) -> Option<(GameKey, String, Option<String>)> {
+    let (link, label) = parse_game_cell(cell);
+    let name = label
+        .or_else(|| link.as_deref().and_then(steam_slug_name))
+        .or_else(|| link.clone())?;
+    let key = link
+        .as_deref()
+        .and_then(GameKey::from_link)
+        .unwrap_or_else(|| GameKey::Name(name.to_lowercase()));
+    Some((key, name, link))
+}
+
 /// The Notes data range (formulas and values), the Helper sheet's columns and
 /// the Recap checkboxes, into people and games.
 fn parse_notes(
@@ -675,20 +705,15 @@ fn parse_notes(
         }
     }
 
-    let mut games = Vec::new();
-    let mut slugs: BTreeMap<String, usize> = BTreeMap::new();
+    let mut games: Vec<Game> = Vec::new();
+    let mut first_row: HashMap<GameKey, usize> = HashMap::new();
     for (i, row) in formulas.iter().enumerate().skip(1) {
         let value_row = values.get(i).map(Vec::as_slice).unwrap_or_default();
-        let (link, label) = parse_game_cell(&row.get(cols.game).map(cell_text).unwrap_or_default());
-        let name = label
-            .clone()
-            .or_else(|| link.as_deref().and_then(steam_slug_name))
-            .or_else(|| link.clone());
-        let Some(name) = name else { continue };
-        let key = link
-            .as_deref()
-            .and_then(GameKey::from_link)
-            .unwrap_or_else(|| GameKey::Name(name.to_lowercase()));
+        let Some((key, name, link)) =
+            row_key(&row.get(cols.game).map(cell_text).unwrap_or_default())
+        else {
+            continue;
+        };
         let text = |c: Option<usize>| {
             c.and_then(|c| value_row.get(c))
                 .map(cell_text)
@@ -703,16 +728,8 @@ fn parse_notes(
                 })
                 .collect()
         };
-        // Two rows of the same game (it happens: "Doublons présents") get
-        // distinct page slugs; the bot always writes to the first.
-        let mut slug = key.slug();
-        let seen = slugs.entry(slug.clone()).or_default();
-        *seen += 1;
-        if *seen > 1 {
-            slug = format!("{slug}-{seen}");
-        }
-        games.push(Game {
-            slug,
+        let game = Game {
+            slug: key.slug(),
             key,
             name,
             link,
@@ -725,9 +742,35 @@ fn parse_notes(
             before: grades(|p| Some(p.col_before)),
             after: grades(|p| p.col_after),
             row: layout.row(i - 1),
-        });
+        };
+        // Two rows of the same game (it happens: "Doublons présents") are one
+        // game, on the first row: the one the bot writes to. The later rows
+        // only fill in what it lacks.
+        match first_row.get(&game.key) {
+            Some(&at) => merge_duplicate(&mut games[at], game),
+            None => {
+                first_row.insert(game.key.clone(), games.len());
+                games.push(game);
+            }
+        }
     }
     Ok((people, games))
+}
+
+/// A later row of the same game into its first row: grades, price and
+/// proposer it lacks, and "played" if either says so.
+fn merge_duplicate(first: &mut Game, later: Game) {
+    for (person, grade) in later.before {
+        first.before.entry(person).or_insert(grade);
+    }
+    for (person, grade) in later.after {
+        first.after.entry(person).or_insert(grade);
+    }
+    first.played |= later.played;
+    first.price = first.price.or(later.price);
+    if first.proposer.is_empty() {
+        first.proposer = later.proposer;
+    }
 }
 
 #[cfg(test)]
@@ -780,6 +823,7 @@ mod tests {
                 9
             ],
             ["Minecraft", "Bob", "Oui"],
+            ["https://store.steampowered.com/app/10/Ten_Game/", "Bob", "Non", "", 3, 5],
         ]))
         .unwrap();
         let values: Rows = serde_json::from_value(json!([
@@ -797,6 +841,7 @@ mod tests {
                 9
             ],
             ["Minecraft", "Bob", "Oui"],
+            ["https://store.steampowered.com/app/10/Ten_Game/", "Bob", "Non", "", 3, 5],
         ]))
         .unwrap();
         let helper: Rows = serde_json::from_value(json!([
@@ -822,7 +867,9 @@ mod tests {
         );
         assert_eq!(ten.price, Some(4.99));
         assert_eq!(ten.before.get("Ana"), Some(&7.0));
-        assert!(!ten.played && !ten.before.contains_key("Bob"));
+        // Its second row only adds Bob's grade.
+        assert_eq!(ten.before.get("Bob"), Some(&5.0));
+        assert!(!ten.played);
         let eleven = &games[1];
         assert_eq!((eleven.name.as_str(), eleven.row), ("Eleven", 6));
         assert_eq!(eleven.before.get("Bob"), Some(&6.5));
